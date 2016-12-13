@@ -1,25 +1,28 @@
+
 var express = require('express');
+var bodyParser = require('body-parser'); // form data parsing - npm install body-parser
 var app = express(); 
+//var router = express.Router();		// return router instance which can be mounted as middeware 
 
-var http = require('http');
-var fs = require('fs');
+app.use(bodyParser.json());	
 
-var logger = require('./logger');   // require and use the logger.js module
-app.use(logger);                    // 'app.use' adds the module to the stack 
+//var logger = require('./logger');   // require and use the logger.js module
+//app.use(logger);                    // 'app.use' adds the module to the stack 
 
-app.use(express.static('public'));  //static middleware serving files from the 'public' folder
+//app.use(express.static('public'));  //static middleware serving files from the 'public' folder
 
-var process = require('./main'); 
+var process = require('./process/main'); 
 
 // returns route object which handles all requests to the /blocks path
-router.route('/')
-	.post(parseUrlencoded, function(request, response) {
-        processBody(request.body);
+app.post('/', function(request, response) {
+	
+    process.main(request, response);
+    //process.somethingElse(request, response);
 
-		watson.textToSpeech(sometext);   // using alternate me
+	//watson.textToSpeech(sometext);   // using alternate me
 
-    	response.json(Object.keys(blocks)); 		// convert to json
-	});
+	//response.json(Object.keys(blocks)); 		// convert to json
+});
 
 // listen on port 3000
 app.listen(3000, function() {
