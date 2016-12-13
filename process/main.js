@@ -1,9 +1,13 @@
 
+var _main = this;
+
+//-----------------------------------------------------------------------------
 // Process the input text - call watson text-to-speech api and stream to file
+//-----------------------------------------------------------------------------
 exports.main = function(request, response) {
 
     var https = require('https');
-    var watson = require('./watson'); 
+    //var watson = require('../watson/textToSpeech'); 
     
     console.log('Body: ' + JSON.stringify(request.body));
  
@@ -25,7 +29,7 @@ exports.main = function(request, response) {
         path: '/v1/messages/' + message,
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': '{your bearer token}'
+            'Authorization': '{your cisco bearer token}'
         }
     };    
 
@@ -40,13 +44,11 @@ exports.main = function(request, response) {
         });
 
         res.on('end', function() {                  // process the message 'text'
-            var obj = JSON.stringify(output);
-            console.log('Output: ' + obj);
-            //response.status(201).json(output);
-            var msgText = watson.getMsgText(output.text);
-            if(msgText) {
-                watson.textToSpeech(msgText);
-            } 
+            var msgObj = JSON.parse(output);
+            console.log('Output: ' + msgObj.text);
+
+            _main.textToSpeech(msgObj.text);       // call watson and generate the WAV file        
+            response.status(201).json("WAV file created ...");
         });
     });
 
@@ -59,6 +61,56 @@ exports.main = function(request, response) {
 
 };
 
+//-----------------------------------------------------------------------------
+// Process the retrieve message text - determine it's for alexa and format
+//-----------------------------------------------------------------------------
+exports.getMsgText = function(text) {
+
+    var alexaText = "";    
+    var newText = text.toLowerCase(text);
+    var alexaIdx = newText.indexOf("alexa");
+ 
+    console.log("GetMsgText: instance of 'alexa' - " + alexaIdx + " - Text: " + newText);
+    alexaText = alexaIdx >= 0 ? newText.slice(alexaIdx+6) : alexaIdx;
+    alexaText = encodeURIComponent(alexaText.trim(alexaText));
+
+    console.log("GetMsgText: converted text - " + alexaText);
+    return alexaText;
+};
+
+//-----------------------------------------------------------------------------
+// Call the Watson Text-to-Speech service
+//-----------------------------------------------------------------------------
+exports.textToSpeech = function(text) {
+
+    var msgText = _main.getMsgText(text);
+
+    if (msgText) {
+        var TextToSpeechV1 = require('watson-developer-cloud/text-to-speech/v1');
+        var fs = require('fs');
+
+        var text_to_speech = new TextToSpeechV1({
+            username: '{username of your created service}',
+            password: '{password of your created service}',
+            headers: {
+                'X-Watson-Learning-Opt-Out': 'true'
+            }
+        });
+
+        var params = {
+            text: msgText,
+            voice: 'en-US_AllisonVoice',
+            accept: 'audio/wav'
+        };
+
+        // Pipe the synthesized text to a file
+        text_to_speech.synthesize(params).pipe(fs.createWriteStream('./alexa.wav'));
+    }
+};
+
+//-----------------------------------------------------------------------------
+// Test harness 
+//-----------------------------------------------------------------------------
 exports.somethingElse = function(request, response) {
     console.log("something ...");
     response.status(201).json("Found Something Else ...");
