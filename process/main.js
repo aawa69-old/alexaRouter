@@ -135,6 +135,9 @@ exports.alexaSpeechRecognizer = function(text) {
     };
 
     var destination = fs.createWriteStream(path.join(__dirname, outputfile));
+    destination.on('finish', function(){
+        process.exit();
+    });
 
     //request.debug = 1;
     request.post(options, function optionalCallback(err, httpResponse, body) {
@@ -144,7 +147,7 @@ exports.alexaSpeechRecognizer = function(text) {
             }
             console.log("\n\r----Processing Done to (" + outputfile + ")----");
             if (loadingInt != null) clearInterval(loadingInt);
-            process.exit();
+            
             if (err) {
                 return console.error('upload failed:', err);
             }
