@@ -1,28 +1,298 @@
 
-var express = require('express');
-var bodyParser = require('body-parser'); // form data parsing - npm install body-parser
-var app = express(); 
-//var router = express.Router();		// return router instance which can be mounted as middeware 
+'use strict';
+
+const bodyParser = require('body-parser'); // form data parsing - npm install body-parser
+
+const https = require('https');
+const fs = require('fs');
+const stream = require('stream');
+const streamToBuffer = require('stream-to-buffer');
+const SpawnStream = require('spawn-stream');
+const isStream = require('is-stream');
+const isBuffer = require('is-buffer');
+const request = require('request');
+const _ = require('lodash');
+const httpParser = require('http-message-parser');
+
+const AUTH_CONFIG = require('./config/auth.json');
+const AUTH_HOST = _.get(AUTH_CONFIG, 'host', 'localhost');
+const AUTH_PORT = _.get(AUTH_CONFIG, 'port', 3000);
+const PRODUCT_ID = _.get(AUTH_CONFIG, 'productId', 'product_id');
+const DEVICE_SERIAL_NUMBER = _.get(AUTH_CONFIG, 'deviceSerialNumber', 0);
+
+const TOKEN_JSON_FILE = __dirname + '/config/token.json';
+const DEVICE_SECRET = _.get(require('./config/deviceSecret.json'), 'deviceSecret');
+
+const CONFIG = require('./config/config.json');
+const WEBSOCKET_PORT = _.get(CONFIG, ['websocket', 'port'], 8080);
+
+const WebSocketServer = require('ws').Server;
+const wss = new WebSocketServer({
+    port: WEBSOCKET_PORT
+});
+
+const app = require('express')();
+const http = require('http').Server(app);
+
+var TOKEN;
 
 app.use(bodyParser.json());	
 
-//var logger = require('./logger');   // require and use the logger.js module
-//app.use(logger);                    // 'app.use' adds the module to the stack 
+// Load the token
+function loadTokenFromFile() {
+  fs.readFile(TOKEN_JSON_FILE, function(error, token) {
+    if (error) {
+      console.error(error);
+    } else {
+      TOKEN = JSON.parse(token).access;
+    }
+  });
+}
 
-//app.use(express.static('public'));  //static middleware serving files from the 'public' folder
+loadTokenFromFile();
+
 
 var process = require('./process/main'); 
 
 // returns route object which handles all requests to the /blocks path
 app.post('/', function(request, response) {
-	
     process.main(request, response);
-    //process.somethingElse(request, response);
-
-	//watson.textToSpeech(sometext);   // using alternate me
-
-	//response.json(Object.keys(blocks)); 		// convert to json
 });
+
+
+
+
+
+
+
+
+
+    wss.on('connection', function(ws) {
+        ws.on('message', function(payload) {
+            try {
+                payload = JSON.parse(payload);
+            }
+            catch (e) {
+                payload = {};
+            }
+
+            const audioBase64 = payload.data;
+            var inputAudioStream = new stream.PassThrough();
+
+            if (_.isString(audioBase64)) {
+                console.log('Received audio');
+                const inputAudioBuffer = new Buffer(audioBase64, 'base64');
+
+                inputAudioStream.end(inputAudioBuffer);
+            }
+            else {
+                inputAudioStream.end('');
+            }
+
+            const sox = SpawnStream('sox', ['-', '-r', '16000', '-e', 'signed', '-b', '16', 'input.wav']);
+
+            inputAudioStream.pipe(sox);
+
+            setTimeout(function() {
+                const formattedAudioStream = fs.createReadStream(__dirname + '/input.wav');
+
+                post(ws, formattedAudioStream);
+            }, 500);
+        });
+    });
+
+    app.get('/', function(req, res) {
+        res.send('index');
+    });
+
+    const PORT = process.ENV_PORT || _.get(CONFIG, 'port', 9000);
+
+
+    function post(ws, audioBuffer) {
+        const BOUNDARY = 'BLAH1234';
+        const BOUNDARY_DASHES = '--';
+        const NEWLINE = '\r\n';
+        const METADATA_CONTENT_DISPOSITION = 'Content-Disposition: form-data; name="metadata"';
+        const METADATA_CONTENT_TYPE = 'Content-Type: application/json; charset=UTF-8';
+        const AUDIO_CONTENT_TYPE = 'Content-Type: audio/L16; rate=16000; channels=1';
+        const AUDIO_CONTENT_DISPOSITION = 'Content-Disposition: form-data; name="audio"';
+
+        const headers = {
+            'Authorization': 'Bearer ' + TOKEN,
+            'Content-Type': 'multipart/form-data; boundary=' + BOUNDARY
+        };
+
+        const metadata = {
+            messageHeader: {},
+            messageBody: {
+                profile: 'alexa-close-talk',
+                locale: 'en-us',
+                'format': 'audio/L16; rate=16000; channels=1'
+            }
+        };
+
+        const postDataStart = [
+            NEWLINE, BOUNDARY_DASHES, BOUNDARY, NEWLINE, METADATA_CONTENT_DISPOSITION, NEWLINE, METADATA_CONTENT_TYPE,
+            NEWLINE, NEWLINE, JSON.stringify(metadata), NEWLINE, BOUNDARY_DASHES, BOUNDARY, NEWLINE,
+            AUDIO_CONTENT_DISPOSITION, NEWLINE, AUDIO_CONTENT_TYPE, NEWLINE, NEWLINE
+        ].join('');
+
+        const postDataEnd = [NEWLINE, BOUNDARY_DASHES, BOUNDARY, BOUNDARY_DASHES, NEWLINE].join('');
+
+        const options = {
+            hostname: 'access-alexa-na.amazon.com',
+            port: 443,
+            path: '/v1/avs/speechrecognizer/recognize',
+            method: 'POST',
+            headers: headers,
+            encoding: 'binary'
+        };
+
+        const req = https.request(options, function(res) {
+
+            streamToBuffer(res, function(err, buffer) {
+
+                console.log('response', buffer.length);
+
+                if (err) {
+                    console.error('Error', err);
+                    return false;
+                }
+
+                var errorCode;
+
+                try {
+                    errorCode = JSON.parse(buffer.toString('utf8')).error.code;
+                    console.log(errorCode);
+                }
+                catch (e) {
+
+                }
+
+                if (errorCode) {
+                    return false;
+                }
+
+                const parsedMessage = httpParser(buffer);
+                var multipart = parsedMessage.multipart;
+
+                if (Array.isArray(multipart)) {
+                    multipart.forEach(function(part) {
+                        var headers = part.headers;
+                        var bodyBuffer = part.body;
+                        var contentType = _.get(headers, 'Content-Type'); // Get Content-Type from the header
+
+                        if (bodyBuffer) {
+                            if (contentType === 'audio/mpeg') {
+                                ws.send(JSON.stringify({
+                                    headers: headers
+                                }));
+
+                                const responseAudioStream = new stream.PassThrough();
+                                responseAudioStream.end(bodyBuffer);
+                                responseAudioStream.on('data', function(data) {
+                                    ws.send(data, {
+                                        binary: true
+                                    });
+                                });
+                            }
+                            else if (contentType === 'application/json') {
+                                var body = JSON.parse(bodyBuffer.toString('utf8'));
+                                var directives = _.get(body, ['messageBody', 'directives']);
+                                var streamUrls = [];
+                                if (directives) {
+                                    body.messageBody.directives = directives.map(function(directive, i) {
+                                        var audioItem = _.get(directive, ['payload', 'audioItem']);
+                                        if (audioItem) {
+                                            var streams = _.get(audioItem, 'streams');
+                                            if (streams) {
+                                                directive.payload.audioItem.streams = streams.map(function(stream, j) {
+                                                    if (/^https?/.test(stream.streamUrl)) {
+                                                        streamUrls.push({
+                                                            propertyPath: ['messageBody', 'directives', i, 'payload', 'audioItem', 'streams', j],
+                                                            url: stream.streamUrl
+                                                        });
+                                                    }
+                                                    return stream;
+                                                });
+                                            }
+                                        }
+                                        return directive;
+                                    });
+                                }
+
+                                var streamUrlsSize = _.size(streamUrls);
+                                if (streamUrlsSize) {
+                                    var completed = 0;
+                                    streamUrls.forEach(function(stream) {
+                                        var urls = [];
+                                        request(stream.url, function(error, response, bodyResponse) {
+                                            urls.push(bodyResponse);
+                                            _.set(body, stream.propertyPath.concat('streamMp3Urls'), urls);
+                                            if (++completed === streamUrlsSize) {
+                                                send(new Buffer(JSON.stringify(body)));
+                                            }
+                                        });
+                                    });
+                                }
+                                else {
+                                    send(bodyBuffer);
+                                }
+
+                                function send(bodyBuffer) {
+                                    ws.send(JSON.stringify({
+                                        headers: headers,
+                                        body: bodyBuffer.toString('utf8')
+                                    }));
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+
+            req.on('error', function(e) {
+                console.log('problem with request: ' + e.message);
+            });
+        });
+
+        if (isStream(audioBuffer)) {
+            streamToBuffer(audioBuffer, function(error, buffer) {
+                if (error) {
+                    console.error(error);
+                    return false;
+                }
+                sendRequest(buffer);
+            });
+        }
+        else if (isBuffer(audioBuffer)) {
+            sendRequest(audioBuffer);
+        }
+        else {
+            console.error('Audio buffer invalid');
+        }
+
+        function sendRequest(audBuffer) {
+            req.write(postDataStart);
+            req.write(audBuffer);
+            req.write(postDataEnd);
+            req.end();
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // listen on port 3000
 app.listen(3000, function() {
