@@ -46,9 +46,13 @@ app.get('/', function(req, res) {
     res.send('index');
 });
 
+app.get('/test', function(req, res) {
+    process.somethingElse(req,res);
+});
+
 // Port listener
-const PORT = process.ENV_PORT || _.get(CONFIG, 'port', 9000);
-app.listen(PORT, function() {
+const PORT = _.get(process.ENV_PORT || CONFIG, 'port', 8081);   // process.ENV_PORT || _.get(CONFIG, 'port', 9000);
+app.listen(PORT, process.ENV_IP, function() {
     console.log('Listening on port ' + PORT);
 });
 

@@ -6,14 +6,13 @@ const https = require('https');
 const fs = require('fs');
 const stream = require('stream');
 const streamToBuffer = require('stream-to-buffer');
-//const SpawnStream = require('spawn-stream');
 const isStream = require('is-stream');
 const isBuffer = require('is-buffer');
 const request = require('request');
 const _ = require('lodash');
 const httpParser = require('http-message-parser');
 
-var TOKEN = _main.loadTokenFromFile(); // Load the token
+const TMP = require('../tmp/test.json');
 
 //-----------------------------------------------------------------------------
 // Method: Main
@@ -31,7 +30,7 @@ exports.main = function(request, response) {
 
     // Webhook event set up for new messages, but check anyway
     if (!(reqBody.resource === "messages" && reqBody.event === "created")) {
-        request.status(400).json('Not a new message');
+        response.status(400).json('Not a new message');
     }
 
     console.log('BEGIN: https call to get message ...');
@@ -46,7 +45,7 @@ exports.main = function(request, response) {
         path: '/v1/messages/' + message,
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': '{your cisco bearer token}'
+            'Authorization': _.get(TMP, 'spark', "no token")
         }
     };
 
@@ -68,7 +67,7 @@ exports.main = function(request, response) {
 
             // Call Watson Speech-to-Text API to generate a WAV file
             _main.textToSpeech(msgObj.text);
-            response.status(201).json("WAV file created ...");
+            //response.send("WAV file created ...");
         });
     });
 
@@ -114,8 +113,8 @@ exports.textToSpeech = function(text) {
         var TextToSpeechV1 = require('watson-developer-cloud/text-to-speech/v1');
 
         var text_to_speech = new TextToSpeechV1({
-            username: '{username of your created service}',
-            password: '{password of your created service}',
+            username: _.get(TMP, 'bmuser'),  //'{username of your created service}',
+            password: _.get(TMP, 'bmpw'),  //'{password of your created service}',
             headers: {
                 'X-Watson-Learning-Opt-Out': 'true'
             }
@@ -138,7 +137,7 @@ exports.textToSpeech = function(text) {
 //-----------------------------------------------------------------------------
 exports.loadTokenFromFile = function() {
 
-    const TOKEN_JSON_FILE = __dirname + '/config/token.json';
+    const TOKEN_JSON_FILE = '../config/token.json';
 
     fs.readFile(TOKEN_JSON_FILE, function(error, token) {
         if (error) {
@@ -303,6 +302,8 @@ exports.sendRequest = function(ws, audBuffer) {
     const METADATA_CONTENT_TYPE = 'Content-Type: application/json; charset=UTF-8';
     const AUDIO_CONTENT_TYPE = 'Content-Type: audio/L16; rate=16000; channels=1';
     const AUDIO_CONTENT_DISPOSITION = 'Content-Disposition: form-data; name="audio"';
+
+    var TOKEN = _main.loadTokenFromFile(); // Load the token
 
     const headers = {
         'Authorization': 'Bearer ' + TOKEN,

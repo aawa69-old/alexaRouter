@@ -1,5 +1,5 @@
 {
-	"port": 3463,
+	"port": 8081,
 	"websocket": {
 		"port": 8080
 	}
