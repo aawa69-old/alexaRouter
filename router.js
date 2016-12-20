@@ -56,10 +56,15 @@ app.listen(PORT, function() {
 // Generate a websocket connection
 //-----------------------------------------------------------------------------
 wss.on('connection', function(ws) {
+    
+    console.log("** Websocket Server Connected **");
+    
     ws.on('message', function(payload) {
-        setTimeout(function() {
-            const formattedAudioStream = fs.createReadStream(__dirname + '/alexa.wav');
-            process.post(ws, formattedAudioStream);
-        }, 500);
+        
+        console.log("*** Websocket Receiving Message ***");
+        
+        const formattedAudioStream = fs.createReadStream(__dirname + '/alexa.wav');
+        process.post(ws, formattedAudioStream);
+
     });
 });

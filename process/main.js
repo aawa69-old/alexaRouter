@@ -6,7 +6,7 @@ const https = require('https');
 const fs = require('fs');
 const stream = require('stream');
 const streamToBuffer = require('stream-to-buffer');
-const SpawnStream = require('spawn-stream');
+//const SpawnStream = require('spawn-stream');
 const isStream = require('is-stream');
 const isBuffer = require('is-buffer');
 const request = require('request');
@@ -124,7 +124,7 @@ exports.textToSpeech = function(text) {
         var params = {
             text: msgText,
             voice: 'en-US_AllisonVoice',
-            accept: 'audio/wav'
+            accept: 'audio/l16;rate=16000'
         };
 
         // Pipe the synthesized text to a file
@@ -155,6 +155,146 @@ exports.loadTokenFromFile = function() {
 // Call the Websocket
 //-----------------------------------------------------------------------------
 exports.postToWS = function(ws, audioBuffer) {
+
+    if (isStream(audioBuffer)) {
+        console.log("isStream(audioBuffer) = true");
+        
+        streamToBuffer(audioBuffer, function(error, buffer) {
+            if (error) {
+                console.error(error);
+                return false;
+            }
+            console.log("METHOD: _main.sendRequest(buffer)");
+            _main.sendRequest(ws, buffer);
+        });
+    }
+    else if (isBuffer(audioBuffer)) {
+        console.log("isBuffer(audioBuffer) = true");
+        console.log("METHOD: _main.sendRequest(audioBuffer)");
+        _main.sendRequest(ws, audioBuffer);
+    }
+    else {
+        console.error('Audio buffer invalid');
+    }
+};
+
+//-----------------------------------------------------------------------------
+// Process message payload
+//-----------------------------------------------------------------------------
+_main.handleMsgBody = function(ws, part) {
+
+    var headers = part.headers;
+    var contentType = _.get(headers, 'Content-Type'); // Get Content-Type from the header
+    var bodyBuffer = part.body;
+
+    console.log("Content-Type: " + contentType);    
+
+    switch (contentType) {
+        case 'audio/mpeg':
+            console.log(" - audio/mpeg: ws.send(headers)");
+            console.log(" - header: " + JSON.stringify({ headers: headers }));    
+            
+            ws.send(JSON.stringify({
+                headers: headers
+            }));
+
+            const responseAudioStream = new stream.PassThrough();
+
+            responseAudioStream.end(bodyBuffer);
+            responseAudioStream.on('data', function(data) {
+                console.log(" - responseAudioStream.on: data -> ws.send(data)");    
+                
+                ws.send(data, {
+                    binary: true
+                });
+            });
+
+        case 'application/json':
+            
+            console.log(" - application/json");
+
+            var body = JSON.parse(bodyBuffer.toString('utf8'));
+            var directives = _.get(body, ['messageBody', 'directives']);
+            var streamUrls = [];
+
+            if (directives) {
+                console.log(" - directives: " + JSON.stringify({ directives }));
+                
+                body.messageBody.directives = directives.map(function(directive, i) {
+                    
+                    var audioItem = _.get(directive, ['payload', 'audioItem']);
+                    console.log(" - audioItem: " + JSON.stringify({ audioItem }));
+                    
+                    if (audioItem) {
+                        var streams = _.get(audioItem, 'streams');
+                        console.log(" - streams: " + JSON.stringify({ streams }));
+                        
+                        if (streams) {
+                            directive.payload.audioItem.streams = streams.map(function(stream, j) {
+                                if (/^https?/.test(stream.streamUrl)) {
+                                    streamUrls.push({
+                                        propertyPath: ['messageBody', 'directives', i, 'payload', 'audioItem', 'streams', j],
+                                        url: stream.streamUrl
+                                    });
+                                }
+                                
+                                console.log(" - return stream: " + JSON.stringify({ stream }));
+                                return stream;
+                            });
+                        }
+                    }
+                    console.log(" - return directive: " + JSON.stringify({ directive }));
+                    return directive;
+                });
+            }
+
+            var streamUrlsSize = _.size(streamUrls);
+            console.log(" - streamUrlsSize: " + streamUrlsSize);
+            
+            if (streamUrlsSize) {
+                var completed = 0;
+                
+                streamUrls.forEach(function(stream) {
+                    var urls = [];
+                    
+                    console.log(" - request(stream.url ... : " + stream.url);
+                    request(stream.url, function(error, response, bodyResponse) {
+                        
+                        urls.push(bodyResponse);
+                        console.log(" - urls.push(bodyResponse): " + JSON.stringify({ bodyResponse }));
+                        _.set(body, stream.propertyPath.concat('streamMp3Urls'), urls);
+                        
+                        if (++completed === streamUrlsSize) {
+                            console.log(" - call to: _main.send(headers, new Buffer(JSON.stringify(body)), ws);");
+                            console.log(" - body: " + JSON.stringify({ body }));
+                            _main.send(headers, new Buffer(JSON.stringify(body)), ws);
+                        }
+                    });
+                });
+            }
+            else {
+                console.log(" - call to: _main.send(headers, bodyBuffer, ws);");
+                console.log(" - bodyBuffer: " + JSON.stringify({ bodyBuffer }));
+                _main.send(headers, bodyBuffer, ws);
+            }
+    }
+};
+
+//-----------------------------------------------------------------------------
+// Send to the Websocket
+//-----------------------------------------------------------------------------
+exports.send = function(headers, bodyBuffer, ws) {
+
+    ws.send(JSON.stringify({
+        headers: headers,
+        body: bodyBuffer.toString('utf8')
+    }));
+};
+
+//-----------------------------------------------------------------------------
+// Send the request
+//-----------------------------------------------------------------------------
+exports.sendRequest = function(ws, audBuffer) {
 
     const BOUNDARY = 'BLAH1234';
     const BOUNDARY_DASHES = '--';
@@ -197,6 +337,9 @@ exports.postToWS = function(ws, audioBuffer) {
         encoding: 'binary'
     };
 
+    console.log("---------------------------");   
+    console.log("BEGIN: postToWS");    
+
     const req = https.request(options, function(res) {
 
         streamToBuffer(res, function(err, buffer) {
@@ -204,7 +347,7 @@ exports.postToWS = function(ws, audioBuffer) {
             console.log('response', buffer.length);
 
             if (err) {
-                console.error('Error', err);
+                console.error('streamToBuffer: Error', err);
                 return false;
             }
 
@@ -212,13 +355,14 @@ exports.postToWS = function(ws, audioBuffer) {
 
             try {
                 errorCode = JSON.parse(buffer.toString('utf8')).error.code;
-                console.log(errorCode);
+                console.log("errorCode = JSON.parse(buffer.toString('utf8')).error.code;" + errorCode);
             }
             catch (e) {
 
             }
 
             if (errorCode) {
+                console.log("errorCode found: exiting");
                 return false;
             }
 
@@ -226,7 +370,11 @@ exports.postToWS = function(ws, audioBuffer) {
             var multipart = parsedMessage.multipart;
 
             if (Array.isArray(multipart)) {
+                console.log("Is Multipart: multipart - " + multipart);    
+                
                 multipart.forEach(function(part) {
+
+                    console.log("part.body: " + part.body);   
 
                     // Message has no payload
                     var bodyBuffer = part.body;
@@ -235,125 +383,28 @@ exports.postToWS = function(ws, audioBuffer) {
                     }
 
                     // Process the message payload
+                    console.log(" METHOD: _main.handleMsgBody(ws, part)");   
                     _main.handleMsgBody(ws, part); 
                 });
             }
         });
 
         req.on('error', function(e) {
-            console.log('problem with request: ' + e.message);
+            console.log("req.on 'error': problem with request - " + e.message);
         });
     });
 
-    if (isStream(audioBuffer)) {
-        streamToBuffer(audioBuffer, function(error, buffer) {
-            if (error) {
-                console.error(error);
-                return false;
-            }
-            _main.sendRequest(buffer);
-        });
-    }
-    else if (isBuffer(audioBuffer)) {
-        _main.sendRequest(audioBuffer);
-    }
-    else {
-        console.error('Audio buffer invalid');
-    }
-};
+    console.log("- BEGIN: sendRequest");
+    console.log("- postDataStart: " + JSON.stringify(postDataStart));
+    console.log("- audBuffer: " + JSON.stringify(audBuffer));
+    console.log("- postDataEnd:   " + JSON.stringify(postDataEnd));
+    console.log("- END: sendRequest");
 
-//-----------------------------------------------------------------------------
-// Process message payload
-//-----------------------------------------------------------------------------
-_main.handleMsgBody = function(ws, part) {
-
-    var headers = part.headers;
-    var contentType = _.get(headers, 'Content-Type'); // Get Content-Type from the header
-    var bodyBuffer = part.body;
-
-    switch (contentType) {
-        case 'audio/mpeg':
-            ws.send(JSON.stringify({
-                headers: headers
-            }));
-
-            const responseAudioStream = new stream.PassThrough();
-
-            responseAudioStream.end(bodyBuffer);
-            responseAudioStream.on('data', function(data) {
-                ws.send(data, {
-                    binary: true
-                });
-            });
-
-        case 'application/json':
-
-            var body = JSON.parse(bodyBuffer.toString('utf8'));
-            var directives = _.get(body, ['messageBody', 'directives']);
-            var streamUrls = [];
-
-            if (directives) {
-                body.messageBody.directives = directives.map(function(directive, i) {
-                    var audioItem = _.get(directive, ['payload', 'audioItem']);
-                    if (audioItem) {
-                        var streams = _.get(audioItem, 'streams');
-                        if (streams) {
-                            directive.payload.audioItem.streams = streams.map(function(stream, j) {
-                                if (/^https?/.test(stream.streamUrl)) {
-                                    streamUrls.push({
-                                        propertyPath: ['messageBody', 'directives', i, 'payload', 'audioItem', 'streams', j],
-                                        url: stream.streamUrl
-                                    });
-                                }
-                                return stream;
-                            });
-                        }
-                    }
-                    return directive;
-                });
-            }
-
-            var streamUrlsSize = _.size(streamUrls);
-            if (streamUrlsSize) {
-                var completed = 0;
-                streamUrls.forEach(function(stream) {
-                    var urls = [];
-                    request(stream.url, function(error, response, bodyResponse) {
-                        urls.push(bodyResponse);
-                        _.set(body, stream.propertyPath.concat('streamMp3Urls'), urls);
-                        if (++completed === streamUrlsSize) {
-                            _main.send(headers, new Buffer(JSON.stringify(body)), ws);
-                        }
-                    });
-                });
-            }
-            else {
-                _main.send(headers, bodyBuffer, ws);
-            }
-    }
-};
-
-//-----------------------------------------------------------------------------
-// Send to the Websocket
-//-----------------------------------------------------------------------------
-exports.send = function(headers, bodyBuffer, ws) {
-
-    ws.send(JSON.stringify({
-        headers: headers,
-        body: bodyBuffer.toString('utf8')
-    }));
-}
-
-//-----------------------------------------------------------------------------
-// Send the request
-//-----------------------------------------------------------------------------
-exports.sendRequest = function(req, dataStart, audBuffer, dataEnd) {
-
-    req.write(dataStart);
-    req.write(audBuffer);
-    req.write(dataEnd);
+    //req.write(postDataStart);
+    //req.write(audBuffer);
+    //req.write(postDataEnd);
     req.end();
-}
+};
 
 //-----------------------------------------------------------------------------
 // Test harness
