@@ -51,6 +51,8 @@ exports.main = function(request, response) {
 
     // The initiating webhook event only passes the message id, not the actual message.
     // Call the Cisco message API to retrieve the actual message text
+    var fileLen = 0;
+    
     var req = https.get(options, function(res) {
         var output = '';
         console.log('Host: ' + options.host + ' - Status: ' + res.statusCode);
@@ -66,8 +68,7 @@ exports.main = function(request, response) {
             console.log('Output: ' + msgObj.text);
 
             // Call Watson Speech-to-Text API to generate a WAV file
-            _main.textToSpeech(msgObj.text);
-            //response.send("WAV file created ...");
+            fileLen = _main.textToSpeech(msgObj.text);
         });
     });
 
@@ -78,7 +79,9 @@ exports.main = function(request, response) {
     });
 
     // On 'End' ...
-    req.end(console.log('END: https call to get message ...'));
+    req.on('end', function() { 
+        console.log('END: https call to get message ...');
+    });
 };
 
 //-----------------------------------------------------------------------------
@@ -91,7 +94,7 @@ exports.getMsgText = function(text) {
     var newText = text.toLowerCase(text);
     var alexaIdx = newText.indexOf("alexa");
 
-    console.log("GetMsgText: instance of 'alexa' - " + alexaIdx + " - Text: " + newText);
+    console.log("METHOD: getMsgText: instance of 'alexa' - " + alexaIdx + " - Text: " + newText);
 
     // Determine if message for 'Alexa' - remove 'Alexa' invocation word
     alexaText = alexaIdx >= 0 ? newText.slice(alexaIdx + 6) : alexaIdx;
@@ -128,7 +131,19 @@ exports.textToSpeech = function(text) {
 
         // Pipe the synthesized text to a file
         text_to_speech.synthesize(params).pipe(fs.createWriteStream('./alexa.wav'));
+
+        var fileLen =  _main.getFilesizeInBytes();
+        console.log("METHOD: textToSpeech: alexa.wav length - " + fileLen);
+        return fileLen;
     }
+};
+
+exports.getFilesizeInBytes = function() {
+    
+    var stats = fs.statSync('./alexa.wav');
+    var fileSizeInBytes = stats["size"];
+    return fileSizeInBytes;
+    
 };
 
 //-----------------------------------------------------------------------------
@@ -193,7 +208,7 @@ _main.handleMsgBody = function(ws, part) {
             console.log(" - audio/mpeg: ws.send(headers)");
             console.log(" - header: " + JSON.stringify({ headers: headers }));    
             
-            ws.send(JSON.stringify({
+            ws.emit(JSON.stringify({
                 headers: headers
             }));
 
@@ -201,9 +216,9 @@ _main.handleMsgBody = function(ws, part) {
 
             responseAudioStream.end(bodyBuffer);
             responseAudioStream.on('data', function(data) {
-                console.log(" - responseAudioStream.on: data -> ws.send(data)");    
+                console.log(" - responseAudioStream.on: data -> ws.emit(data)");    
                 
-                ws.send(data, {
+                ws.emit(data, {
                     binary: true
                 });
             });
@@ -284,7 +299,7 @@ _main.handleMsgBody = function(ws, part) {
 //-----------------------------------------------------------------------------
 exports.send = function(headers, bodyBuffer, ws) {
 
-    ws.send(JSON.stringify({
+    ws.emit(JSON.stringify({
         headers: headers,
         body: bodyBuffer.toString('utf8')
     }));
@@ -395,16 +410,18 @@ exports.sendRequest = function(ws, audBuffer) {
         });
     });
 
+    var buffer = JSON.stringify(audBuffer);
+
     console.log("- BEGIN: sendRequest");
     console.log("- postDataStart: " + JSON.stringify(postDataStart));
-    console.log("- audBuffer: " + JSON.stringify(audBuffer));
+    console.log("- audBuffer: " + buffer.substring(0,20) + '....');
     console.log("- postDataEnd:   " + JSON.stringify(postDataEnd));
     console.log("- END: sendRequest");
 
     //req.write(postDataStart);
     //req.write(audBuffer);
     //req.write(postDataEnd);
-    req.end();
+    //req.end();
 };
 
 //-----------------------------------------------------------------------------

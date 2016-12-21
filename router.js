@@ -1,7 +1,7 @@
 'use strict';
 
-const fs = require('fs');
 const _ = require('lodash');
+const fs = require('fs');
 const bodyParser = require('body-parser'); // form data parsing - npm install body-parser
 
 //-----------------------------------------------------------------------------
@@ -18,28 +18,49 @@ const DEVICE_SECRET = _.get(require('./config/deviceSecret.json'), 'deviceSecret
 const CONFIG = require('./config/config.json');
 
 //-----------------------------------------------------------------------------
-// Create a Websocket instance on port 8080
-//-----------------------------------------------------------------------------
-const WEBSOCKET_PORT = _.get(CONFIG, ['websocket', 'port'], 8080);
-
-const WebSocketServer = require('ws').Server;
-const wss = new WebSocketServer({
-    port: WEBSOCKET_PORT
-});
-
-//-----------------------------------------------------------------------------
 // HTTP Server details
 //-----------------------------------------------------------------------------
-const app = require('express')();
-const http = require('http').Server(app);
+var express = require("express");
+var app = express();
 
+var server = require('http').createServer(app);
+
+//var wss = require('./process/websocket');
+
+var io = require('socket.io')(server);
+var ioClient = require('socket.io-client');
+
+var port = _.get(CONFIG, 'port', 8081); // _.get(process.ENV_PORT || CONFIG, 'port', 8081);     
+
+//-----------------------------------------------------------------------------
+// Create a Websocket instance on port 8080
+//-----------------------------------------------------------------------------
+//const WEBSOCKET_PORT = _.get(CONFIG, ['websocket', 'port'], 8080);
+
+//const WebSocketServer = require('ws').Server;
+//const wss = new WebSocketServer({
+//    port: WEBSOCKET_PORT
+//});
+
+//-----------------------------------------------------------------------------
+// Routes
+//-----------------------------------------------------------------------------
 var process = require('./process/main');
 
 app.use(bodyParser.json());
 
 // Routers
+//app.post('/', function(request, response) {
+//    process.main(request, response);
+//response.send("WAV file created ...");
+//});
+
 app.post('/', function(request, response) {
-    process.main(request, response);
+    //process.main(request, response);
+
+    var ioClient = require('socket.io-client');
+    var clientWS = ioClient.connect('http://localhost:8081');
+    clientWS.emit('messages', "process file ...");
 });
 
 app.get('/', function(req, res) {
@@ -47,28 +68,27 @@ app.get('/', function(req, res) {
 });
 
 app.get('/test', function(req, res) {
-    process.somethingElse(req,res);
-});
-
-// Port listener
-const PORT = _.get(process.ENV_PORT || CONFIG, 'port', 8081);   // process.ENV_PORT || _.get(CONFIG, 'port', 9000);
-app.listen(PORT, process.ENV_IP, function() {
-    console.log('Listening on port ' + PORT);
+    process.somethingElse(req, res);
 });
 
 //-----------------------------------------------------------------------------
 // Generate a websocket connection
 //-----------------------------------------------------------------------------
-wss.on('connection', function(ws) {
-    
-    console.log("** Websocket Server Connected **");
-    
-    ws.on('message', function(payload) {
-        
-        console.log("*** Websocket Receiving Message ***");
-        
-        const formattedAudioStream = fs.createReadStream(__dirname + '/alexa.wav');
-        process.post(ws, formattedAudioStream);
+io.on('connection', function(ws) {
 
+    console.log("** Websocket Server Connected **");
+
+    ws.on('messages', function(data) {
+
+        console.log("*** Websocket Receiving Message ***");
+
+        const formattedAudioStream = fs.createReadStream(__dirname + '/alexa.wav');
+        process.postToWS(ws, formattedAudioStream);
     });
+});
+
+// Port listener
+//server.on('request', app);
+server.listen(port, function() { //server.listen(port, process.ENV_IP, function() {
+    console.log('HTTP listening on: ' + server.address().address + '/' + server.address().port);
 });
