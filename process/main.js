@@ -318,7 +318,7 @@ exports.sendRequest = function(ws, audBuffer) {
     const AUDIO_CONTENT_TYPE = 'Content-Type: audio/L16; rate=16000; channels=1';
     const AUDIO_CONTENT_DISPOSITION = 'Content-Disposition: form-data; name="audio"';
 
-    var TOKEN = _main.loadTokenFromFile(); // Load the token
+    var TOKEN = _main.loadTokenFromFile(); // TEMPORARY - Load the token from static file 
 
     const headers = {
         'Authorization': 'Bearer ' + TOKEN,
@@ -414,14 +414,14 @@ exports.sendRequest = function(ws, audBuffer) {
 
     console.log("- BEGIN: sendRequest");
     console.log("- postDataStart: " + JSON.stringify(postDataStart));
-    console.log("- audBuffer: " + buffer.substring(0,20) + '....');
+    console.log("- audBuffer: " + buffer.substring(0,60) + '....');
     console.log("- postDataEnd:   " + JSON.stringify(postDataEnd));
     console.log("- END: sendRequest");
 
-    //req.write(postDataStart);
-    //req.write(audBuffer);
-    //req.write(postDataEnd);
-    //req.end();
+    req.write(postDataStart);
+    req.write(audBuffer);
+    req.write(postDataEnd);
+    req.end();
 };
 
 //-----------------------------------------------------------------------------
