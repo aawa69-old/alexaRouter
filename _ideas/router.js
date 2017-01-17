@@ -25,7 +25,22 @@ var app = express();
 
 var server = require('http').createServer(app);
 
+//var wss = require('./process/websocket');
+
+var io = require('socket.io')(server);
+var ioClient = require('socket.io-client');
+
 var port = _.get(CONFIG, 'port', 8081); // _.get(process.ENV_PORT || CONFIG, 'port', 8081);     
+
+//-----------------------------------------------------------------------------
+// Create a Websocket instance on port 8080
+//-----------------------------------------------------------------------------
+//const WEBSOCKET_PORT = _.get(CONFIG, ['websocket', 'port'], 8080);
+
+//const WebSocketServer = require('ws').Server;
+//const wss = new WebSocketServer({
+//    port: WEBSOCKET_PORT
+//});
 
 //-----------------------------------------------------------------------------
 // Routes
@@ -35,9 +50,17 @@ var process = require('./process/main');
 app.use(bodyParser.json());
 
 // Routers
+//app.post('/', function(request, response) {
+//    process.main(request, response);
+//response.send("WAV file created ...");
+//});
+
 app.post('/', function(request, response) {
-    
     process.main(request, response);
+
+    //var ioClient = require('socket.io-client');
+    //var clientWS = ioClient.connect('http://localhost:8081');
+    //clientWS.emit('messages', "process file ...");
 });
 
 app.get('/', function(req, res) {
@@ -46,6 +69,22 @@ app.get('/', function(req, res) {
 
 app.get('/test', function(req, res) {
     process.somethingElse(req, res);
+});
+
+//-----------------------------------------------------------------------------
+// Generate a websocket connection
+//-----------------------------------------------------------------------------
+io.on('connection', function(ws) {
+
+    console.log("** Websocket Server Connected **");
+
+    ws.on('messages', function(data) {
+
+        console.log("*** Websocket Receiving Message ***");
+
+        const formattedAudioStream = fs.createReadStream(__dirname + '/alexa.wav');
+        process.postToWS(ws, formattedAudioStream);
+    });
 });
 
 // Port listener
